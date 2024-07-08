@@ -95,7 +95,13 @@ class MicroscopeControlApp(QMainWindow):
             ("label", "Binning"),
             ("combo", ["1x1", "2x2", "4x4"], "binning_input"),
             ("label", "Pixel Type"),
-            ("combo", ["GREY8", "GREY16", "RGB24"], "pixel_type_input"),
+            ("combo", ["GREY8", "RGB32"], "pixel_type_input"),
+            ("label", "Flip Horizontal"),
+            ("combo", ["FALSE", "TRUE"], "flip_horizontal_input"),
+            ("label", "Flip Vertical"),
+            ("combo", ["FALSE", "TRUE"], "flip_vertical_input"),
+            ("label", "Exposure Auto"),
+            ("combo", ["0", "1"], "exposure_auto_input"),
             ("label", "Exposure (ms)"),
             ("line_edit", "", "exposure_input"),
             ("button", "Set Camera Options", "set_camera_button")
@@ -241,13 +247,33 @@ class MicroscopeControlApp(QMainWindow):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
             return
-        binning = self.binning_input.currentText()
-        pixel_type = self.pixel_type_input.currentText()
-        exposure = self.exposure_input.text()
-        self.output_area.append(f"Setting camera options: Binning={binning}, Pixel Type={pixel_type}, Exposure={exposure}ms")
-        self.microscope.camera.set_option("Binning", binning)
-        self.microscope.camera.set_option("PixelType", pixel_type)
-        self.microscope.camera.set_exposure(int(exposure))
+        
+        try:
+            binning = self.binning_input.currentText()
+            pixel_type = self.pixel_type_input.currentText()
+            flip_horizontal = self.flip_horizontal_input.currentText()
+            flip_vertical = self.flip_vertical_input.currentText()
+            exposure_auto = self.exposure_auto_input.currentText()
+            exposure = self.exposure_input.text()
+
+            self.output_area.append(f"Setting camera options: Binning={binning}, PixelType={pixel_type}, "
+                                    f"FlipHorizontal={flip_horizontal}, FlipVertical={flip_vertical}, "
+                                    f"ExposureAuto={exposure_auto}, Exposure={exposure}ms")
+
+            self.microscope.camera.set_option("Binning", binning)
+            self.microscope.camera.set_option("PixelType", pixel_type)
+            self.microscope.camera.set_option("FlipHorizontal", flip_horizontal)
+            self.microscope.camera.set_option("FlipVertical", flip_vertical)
+            self.microscope.camera.set_option("ExposureAuto", exposure_auto)
+            
+            if exposure_auto == "0":  # Only set exposure if auto exposure is off
+                self.microscope.camera.set_exposure(int(exposure))
+
+            self.output_area.append("Camera options set successfully.")
+        except Exception as e:
+            self.output_area.append(f"Error setting camera options: {str(e)}")
+            QMessageBox.warning(self, "Error", f"Failed to set camera options: {str(e)}")
+
 
     def start_autofocus(self):
         if not self.microscope:
@@ -281,58 +307,125 @@ class MicroscopeControlApp(QMainWindow):
         self.microscope.stage.move(x=x, y=y, z=z)
         self.output_area.append("Finished Moving!")
 
+    # def capture_image(self):
+    #     if not self.microscope:
+    #         QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+    #         return
+    #     self.output_area.append("Capturing image...")
+    #     try:
+    #         # Turn on the lamp
+    #         self.microscope.lamp.set_on()
+    #         time.sleep(0.5)  # Pause for 0.5 seconds to allow the lamp to stabilize
+
+    #         # Additional delay for camera stabilization
+    #         time.sleep(2)  # Adjust as needed based on your camera's requirements
+
+    #         # Capture multiple frames and keep the last one
+    #         # for _ in range(4):
+    #         #     i = 1
+    #         #     image = self.microscope.camera.capture()
+    #         #     time.sleep(0.6)  # Short delay between captures
+    #         #     pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{i}.tif")
+    #         #     tiff.imwrite(pre_path, image)
+    #         #     i = i + 1
+    #         #     print(i)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)  # Short delay between captures
+    #         pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{1}.tif")
+    #         tiff.imwrite(pre_path, image)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)  # Short delay between captures
+    #         pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{2}.tif")
+    #         tiff.imwrite(pre_path, image)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)  # Short delay between captures
+    #         pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{3}.tif")
+    #         tiff.imwrite(pre_path, image)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)  # Short delay between captures
+    #         pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{4}.tif")
+    #         tiff.imwrite(pre_path, image)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)  # Short delay between captures
+    #         pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{5}.tif")
+    #         tiff.imwrite(pre_path, image)
+
+    #         if image is not None:
+    #             # Debug statement to check the captured image
+    #             print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
+    #             self.display_image(image)
+    #             self.output_area.append("Image captured successfully.")
+    #         else:
+    #             self.output_area.append("Failed to capture image.")
+            
+    #         # Turn off the lamp
+    #         self.microscope.lamp.set_off()
+    #     except Exception as e:
+    #         self.output_area.append(f"Error capturing image: {e}")
+    #         print(f"Detailed error in capture_image: {str(e)}")
+    #         import traceback
+    #         print(f"Traceback in capture_image: {traceback.format_exc()}")
+    # 
+    # 
+    # def display_image(self, image):
+    #     try:
+    #         if image is not None:
+    #             if len(image.shape) == 2:
+    #                 height, width = image.shape
+    #                 channels = 1
+    #             elif len(image.shape) == 3:
+    #                 height, width, channels = image.shape
+    #             else:
+    #                 raise ValueError(f"Unexpected image shape: {image.shape}")
+
+    #             bytes_per_line = width * channels
+                
+    #             # Debug statement to check the QImage parameters
+    #             print(f"Creating QImage with width: {width}, height: {height}, channels: {channels}, bytes_per_line: {bytes_per_line}")
+                
+    #             if channels == 1:
+    #                 q_image = QImage(image.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
+    #             elif channels == 3:
+    #                 q_image = QImage(image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+    #             else:
+    #                 raise ValueError(f"Unsupported number of channels: {channels}")
+
+    #             pixmap = QPixmap.fromImage(q_image)
+    #             self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
+    #             self.image_label.setScaledContents(True)
+    #         else:
+    #             print("No image to display")
+    #     except Exception as e:
+    #         print(f"Error in display_image: {str(e)}")
+    #         import traceback
+    #         print(f"Traceback in display_image: {traceback.format_exc()}")
+
+
     def capture_image(self):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
             return
         self.output_area.append("Capturing image...")
         try:
-            # Turn on the lamp
             self.microscope.lamp.set_on()
-            time.sleep(0.5)  # Pause for 0.5 seconds to allow the lamp to stabilize
+            time.sleep(0.5)
+            time.sleep(2)
 
-            # Additional delay for camera stabilization
-            time.sleep(2)  # Adjust as needed based on your camera's requirements
-
-            # Capture multiple frames and keep the last one
-            # for _ in range(4):
-            #     i = 1
-            #     image = self.microscope.camera.capture()
-            #     time.sleep(0.6)  # Short delay between captures
-            #     pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{i}.tif")
-            #     tiff.imwrite(pre_path, image)
-            #     i = i + 1
-            #     print(i)
             image = self.microscope.camera.capture()
-            time.sleep(0.6)  # Short delay between captures
-            pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{1}.tif")
-            tiff.imwrite(pre_path, image)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)  # Short delay between captures
-            pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{2}.tif")
-            tiff.imwrite(pre_path, image)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)  # Short delay between captures
-            pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{3}.tif")
-            tiff.imwrite(pre_path, image)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)  # Short delay between captures
-            pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{4}.tif")
-            tiff.imwrite(pre_path, image)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)  # Short delay between captures
-            pre_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", f"capture_{5}.tif")
-            tiff.imwrite(pre_path, image)
-
             if image is not None:
-                # Debug statement to check the captured image
                 print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
                 self.display_image(image)
                 self.output_area.append("Image captured successfully.")
+                
+                # Save the image
+                pixel_type = self.microscope.camera.core.get_property(self.microscope.camera.camera, "PixelType")
+                file_name = f"capture_{pixel_type}_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+                save_path = os.path.join('C:\\Users\\Raman1\\Desktop\\luke_github\\super_temp\\', "Captures", file_name)
+                tiff.imwrite(save_path, image)
+                self.output_area.append(f"Image saved as {file_name}")
             else:
                 self.output_area.append("Failed to capture image.")
             
-            # Turn off the lamp
             self.microscope.lamp.set_off()
         except Exception as e:
             self.output_area.append(f"Error capturing image: {e}")
@@ -343,26 +436,21 @@ class MicroscopeControlApp(QMainWindow):
     def display_image(self, image):
         try:
             if image is not None:
-                if len(image.shape) == 2:
-                    height, width = image.shape
-                    channels = 1
-                elif len(image.shape) == 3:
-                    height, width, channels = image.shape
+                height, width = image.shape[:2]
+                bytes_per_line = width * (3 if len(image.shape) == 3 else 1)
+                
+                # Convert image data to bytes
+                image_bytes = image.tobytes()
+                
+                if len(image.shape) == 2:  # Grayscale
+                    q_image = QImage(image_bytes, width, height, bytes_per_line, QImage.Format_Grayscale8)
+                elif len(image.shape) == 3:  # RGB
+                    q_image = QImage(image_bytes, width, height, bytes_per_line, QImage.Format_RGB888)
                 else:
                     raise ValueError(f"Unexpected image shape: {image.shape}")
-
-                bytes_per_line = width * channels
                 
-                # Debug statement to check the QImage parameters
-                print(f"Creating QImage with width: {width}, height: {height}, channels: {channels}, bytes_per_line: {bytes_per_line}")
+                print(f"Creating QImage with width: {width}, height: {height}, channels: {3 if len(image.shape) == 3 else 1}, bytes_per_line: {bytes_per_line}")
                 
-                if channels == 1:
-                    q_image = QImage(image.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
-                elif channels == 3:
-                    q_image = QImage(image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-                else:
-                    raise ValueError(f"Unsupported number of channels: {channels}")
-
                 pixmap = QPixmap.fromImage(q_image)
                 self.image_label.setPixmap(pixmap.scaled(self.image_label.size(), Qt.KeepAspectRatio))
                 self.image_label.setScaledContents(True)
@@ -372,6 +460,8 @@ class MicroscopeControlApp(QMainWindow):
             print(f"Error in display_image: {str(e)}")
             import traceback
             print(f"Traceback in display_image: {traceback.format_exc()}")
+
+
 
     def run_test_script(self):
         if not self.microscope:
