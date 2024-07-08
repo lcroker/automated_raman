@@ -1,4 +1,7 @@
 import numpy as np
+import time
+import os
+import tifffile as tiff
 from abc import ABC, abstractmethod
 
 class ICamera(ABC):
@@ -63,6 +66,15 @@ class Camera(ICamera):
 
     def capture(self) -> np.array:
         try:
+            time.sleep(4)
+            self.core.snap_image()
+            time.sleep(0.6)
+            self.core.snap_image()
+            time.sleep(0.6)
+            self.core.snap_image()
+            time.sleep(0.6)
+            self.core.snap_image()
+            time.sleep(0.6)
             self.core.snap_image()
             img = self.core.get_image()
             
@@ -71,21 +83,41 @@ class Camera(ICamera):
             byte_depth = self.core.get_bytes_per_pixel()
             pixel_type = self.core.get_property(self.camera, "PixelType")
 
+            print(f"Raw image data size: {len(img)} bytes")
             print(f"Image captured. Width: {self.width}, Height: {self.height}, Byte depth: {byte_depth}, Pixel type: {pixel_type}")
 
             if pixel_type == "GREY8":
                 img = np.frombuffer(img, dtype=np.uint8).reshape((self.height, self.width))
             elif pixel_type == "RGB32":
-                # RGB32 is typically stored as BGRA
                 img = np.frombuffer(img, dtype=np.uint8).reshape((self.height, self.width, 4))
-                # Convert BGRA to RGB
-                img = img[:, :, [2, 1, 0]]  # Reorder channels from BGRA to RGB
+                img = img[:, :, :3]  # Remove alpha channel if present
             else:
                 raise ValueError(f"Unsupported pixel type: {pixel_type}")
             
             print(f"Reshaped image. Shape: {img.shape}, dtype: {img.dtype}")
+            print(f"Image statistics: Min: {np.min(img)}, Max: {np.max(img)}, Mean: {np.mean(img)}")
+            
+            if pixel_type == "RGB32":
+                print("RGB channel statistics:")
+                for i, color in enumerate(['Red', 'Green', 'Blue']):
+                    channel = img[:,:,i]
+                    print(f"  {color}: Min: {np.min(channel)}, Max: {np.max(channel)}, Mean: {np.mean(channel):.2f}")
+
+            # Print white balance values without applying them
+            try:
+                r_gain = self.core.get_property(self.camera, "WhiteBalanceRGain")
+                g_gain = self.core.get_property(self.camera, "WhiteBalanceGGain")
+                b_gain = self.core.get_property(self.camera, "WhiteBalanceBGain")
+                print(f"White balance gains: R={r_gain}, G={g_gain}, B={b_gain}")
+            except Exception as e:
+                print(f"Error getting white balance values: {str(e)}")
             
             self.snapped_image = img
+            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+            os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
+            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+            pre_path = os.path.join("Autofocus", "captures", file_name)
+            tiff.imwrite(pre_path, img)
             return self.snapped_image
         except Exception as e:
             print(f"Error capturing image: {str(e)}")

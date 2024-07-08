@@ -17,6 +17,7 @@ class Autofocus(ABC):
         self.captures = []
         os.makedirs(os.path.join(self.image_dir, "images"), exist_ok=True)
         os.makedirs(os.path.join(self.image_dir, "spectra"), exist_ok=True)
+        os.makedirs(os.path.join(self.image_dir, "captures"), exist_ok=True)
 
     def zscan(self, start: int, end: int, step: float = 1) -> None:
         self.start = start
@@ -40,13 +41,15 @@ class Autofocus(ABC):
             try:
                 img = self.camera.capture()
                 if isinstance(self.camera, Camera):
-                    pre_path = os.path.join(self.image_dir, "images", f"capture_{i}.tif")
+                    filename = f"capture_z{z_val:.2f}.tif"
+                    pre_path = os.path.join(self.image_dir, "images", filename)
                     tiff.imwrite(pre_path, img)
-                    self.captures.append(pre_path)
+                    self.captures.append((pre_path, z_val))
                 elif isinstance(self.camera, SpectralCamera):
-                    pre_path = os.path.join(self.image_dir, "spectra", f"capture_{i}.csv")
+                    filename = f"capture_z{z_val:.2f}.csv"
+                    pre_path = os.path.join(self.image_dir, "spectra", filename)
                     pd.DataFrame(img).to_csv(pre_path, index=False)
-                    self.captures.append(pre_path)
+                    self.captures.append((pre_path, z_val))
             except Exception as e:
                 print(f"Error capturing at z={z_val}: {e}")
             self.stage.move(z=z_val)
@@ -66,7 +69,7 @@ class Amplitude(Autofocus):
         self.zscan(start, end, step)
         max_var, max_index, variances = -1, -1, []
 
-        for i, capture_path in enumerate(self.captures):
+        for i, (capture_path, z_val) in enumerate(self.captures):
             try:
                 image = tiff.imread(capture_path)
                 mean = np.mean(image)
@@ -78,9 +81,9 @@ class Amplitude(Autofocus):
                 if norm_var > max_var:
                     max_var, max_index = norm_var, i
             except Exception as e:
-                print(f"Error processing capture {i}: {e}")
+                print(f"Error processing capture {i} at z={z_val}: {e}")
 
-        return self.start + self.step * max_index
+        return self.captures[max_index][1]  # Return the z-value of the best focus
 
 class Phase(Autofocus):
     def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
