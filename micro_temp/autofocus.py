@@ -43,7 +43,7 @@ class Autofocus(ABC):
                 if isinstance(self.camera, Camera):
                     filename = f"capture_z{z_val:.2f}.tif"
                     pre_path = os.path.join(self.image_dir, "images", filename)
-                    tiff.imwrite(pre_path, img)
+                    tiff.imwrite(pre_path, img) # photometric=minisblack
                     self.captures.append((pre_path, z_val))
                 elif isinstance(self.camera, SpectralCamera):
                     filename = f"capture_z{z_val:.2f}.csv"

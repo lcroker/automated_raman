@@ -88,6 +88,19 @@ class Microscope:
         cell_filter = filter_strategy()
         return cell_filter.filter(cell_xy, n_filtered)
     
+    def set_option(self, device, property_name, value):
+        try:
+            if device == "FilterCube":
+                self.core.set_property(device, "Label", value)
+                logging.info(f"Set FilterCube Label to {value}")
+            else:
+                # For future extensions, you can add more device-specific logic here
+                self.core.set_property(device, property_name, value)
+                logging.info(f"Set {device} {property_name} to {value}")
+        except Exception as e:
+            logging.error(f"Error setting {device} {property_name}: {str(e)}")
+            raise
+    
     
     def find_java_process(self):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):

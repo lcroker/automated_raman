@@ -66,15 +66,6 @@ class Camera(ICamera):
 
     def capture(self) -> np.array:
         try:
-            time.sleep(4)
-            self.core.snap_image()
-            time.sleep(0.6)
-            self.core.snap_image()
-            time.sleep(0.6)
-            self.core.snap_image()
-            time.sleep(0.6)
-            self.core.snap_image()
-            time.sleep(0.6)
             self.core.snap_image()
             img = self.core.get_image()
             
@@ -111,13 +102,8 @@ class Camera(ICamera):
                 print(f"White balance gains: R={r_gain}, G={g_gain}, B={b_gain}")
             except Exception as e:
                 print(f"Error getting white balance values: {str(e)}")
-            
+                
             self.snapped_image = img
-            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
-            os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
-            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
-            pre_path = os.path.join("Autofocus", "captures", file_name)
-            tiff.imwrite(pre_path, img)
             return self.snapped_image
         except Exception as e:
             print(f"Error capturing image: {str(e)}")

@@ -96,6 +96,8 @@ class MicroscopeControlApp(QMainWindow):
             ("combo", ["1x1", "2x2", "4x4"], "binning_input"),
             ("label", "Pixel Type"),
             ("combo", ["GREY8", "RGB32"], "pixel_type_input"),
+            ("label", "FilterCube label"),
+            ("combo", ["Position-1", "Position-2", "Position-3", "Position-4", "Position-5", "Position-6"], "filter_input"),
             ("label", "Exposure Auto"),
             ("combo", ["0", "1"], "exposure_auto_input"),
             ("label", "Exposure (ms)"),
@@ -249,13 +251,15 @@ class MicroscopeControlApp(QMainWindow):
             pixel_type = self.pixel_type_input.currentText()
             exposure_auto = self.exposure_auto_input.currentText()
             exposure = self.exposure_input.text()
+            filter_position = self.filter_input.currentText()
 
             self.output_area.append(f"Setting camera options: Binning={binning}, PixelType={pixel_type}, "
-                                    f"ExposureAuto={exposure_auto}, Exposure={exposure}ms")
+                                    f"ExposureAuto={exposure_auto}, Exposure={exposure}ms, FilterCube={filter_position}")
 
             self.microscope.camera.set_option("Binning", binning)
             self.microscope.camera.set_option("PixelType", pixel_type)
             self.microscope.camera.set_option("ExposureAuto", exposure_auto)
+            self.microscope.set_option("FilterCube", "Label", filter_position)
             
             if exposure_auto == "0":  # Only set exposure if auto exposure is off
                 self.microscope.camera.set_exposure(int(exposure))
@@ -306,9 +310,24 @@ class MicroscopeControlApp(QMainWindow):
             return
         self.output_area.append("Capturing image...")
         try:
+            # Turn on the lamp
             self.microscope.lamp.set_on()
+            time.sleep(4)
+            image = self.microscope.camera.capture()
+            time.sleep(0.6)
+            image = self.microscope.camera.capture()
+            time.sleep(0.6)
+            image = self.microscope.camera.capture()
+            time.sleep(0.6)
+            image = self.microscope.camera.capture()
+            time.sleep(0.6)
 
             image = self.microscope.camera.capture()
+            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+            os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
+            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+            pre_path = os.path.join("Autofocus", "captures", file_name)
+            tiff.imwrite(pre_path, image)
             if image is not None:
                 print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
                 self.display_image(image)
