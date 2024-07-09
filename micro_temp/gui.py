@@ -4,6 +4,8 @@ import logging
 import time
 import gc
 import numpy as np
+import matplotlib.pyplot as plt
+import io
 import tifffile as tiff
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QComboBox, QTextEdit, QFileDialog, QMessageBox, 
@@ -15,7 +17,10 @@ from autofocus import Amplitude, Phase
 from base_cell_identifier import ICellIdentifier, CustomCellIdentifier
 from base_cell_filter import ICellFilter, Isolated
 
+
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
+plt.rcParams['font.family'] = 'DejaVu Sans'
 
 class MicroManagerInitThread(QThread):
     finished = pyqtSignal(object, str)
@@ -115,7 +120,8 @@ class MicroscopeControlApp(QMainWindow):
             ("line_edit", "", "end_position_input"),
             ("label", "Step Size"),
             ("line_edit", "", "step_size_input"),
-            ("button", "Start Autofocus", "autofocus_button")
+            ("button", "Start Autofocus", "autofocus_button"),
+            ("image", (400, 300), "chart_label")
         ])
 
         # Stage Control Section
@@ -174,7 +180,8 @@ class MicroscopeControlApp(QMainWindow):
         layout = QVBoxLayout()
         for item_type, *args in items:
             if item_type == "label":
-                layout.addWidget(QLabel(args[0]))
+                widget = QLabel(args[0])
+                layout.addWidget(widget)
             elif item_type == "line_edit":
                 widget = QLineEdit(args[0])
                 layout.addWidget(widget)
@@ -197,6 +204,23 @@ class MicroscopeControlApp(QMainWindow):
                 widget.setStyleSheet("border: 1px solid black;")
                 layout.addWidget(widget)
                 setattr(self, args[1], widget)
+            elif item_type == "hbox":
+                hbox = QHBoxLayout()
+                for sub_item in args[0]:
+                    sub_type, *sub_args = sub_item
+                    if sub_type == "image":
+                        widget = QLabel()
+                        widget.setFixedSize(*sub_args[0])
+                        widget.setStyleSheet("border: 1px solid black;")
+                        hbox.addWidget(widget)
+                        setattr(self, sub_args[1], widget)
+                    elif sub_type == "text":
+                        widget = QTextEdit()
+                        widget.setFixedSize(*sub_args[0])
+                        widget.setReadOnly(True)
+                        hbox.addWidget(widget)
+                        setattr(self, sub_args[1], widget)
+                layout.addLayout(hbox)
         group.setLayout(layout)
         return group
 
@@ -271,6 +295,25 @@ class MicroscopeControlApp(QMainWindow):
 
 
 
+    # def start_autofocus(self):
+    #     if not self.microscope:
+    #         QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+    #         return
+    #     start = int(self.start_position_input.text())
+    #     end = int(self.end_position_input.text())
+    #     step = float(self.step_size_input.text())
+    #     strategy_name = self.autofocus_strategy_dropdown.currentText()
+    #     strategy_class = self.autofocus_strategies[strategy_name]
+        
+    #     self.output_area.append(f"Starting autofocus with {strategy_name}: Start={start}, End={end}, Step={step}")
+        
+    #     # Create an instance of the autofocus strategy
+    #     autofocus_strategy = strategy_class(self.microscope.camera, self.microscope.stage, self.microscope.lamp)
+        
+    #     # Call the focus method of the strategy
+    #     result = autofocus_strategy.focus(start, end, step)
+        
+    #     self.output_area.append(f"Autofocus result: Optimal position={result}")
     def start_autofocus(self):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
@@ -284,24 +327,58 @@ class MicroscopeControlApp(QMainWindow):
         self.output_area.append(f"Starting autofocus with {strategy_name}: Start={start}, End={end}, Step={step}")
         
         # Create an instance of the autofocus strategy
-        autofocus_strategy = strategy_class(self.microscope.camera, self.microscope.stage, self.microscope.lamp)
+        self.microscope.set_autofocus_strategy(strategy_class)
         
         # Call the focus method of the strategy
-        result = autofocus_strategy.focus(start, end, step)
+        result = self.microscope.auto_focus(start, end, step)
         
-        self.output_area.append(f"Autofocus result: Optimal position={result}")
-
-    def move_stage(self):
-        if not self.microscope:
-            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
-            return
-        x = float(self.stage_x_input.text()) if self.stage_x_input.text() else None
-        y = float(self.stage_y_input.text()) if self.stage_y_input.text() else None
-        z = float(self.stage_z_input.text()) if self.stage_z_input.text() else None
-
-        self.output_area.append(f"Moving stage to: X={x}, Y={y}, Z={z}")
-        self.microscope.stage.move(x=x, y=y, z=z)
-        self.output_area.append("Finished Moving!")
+        if isinstance(result, tuple) and len(result) == 2:
+            optimal_z, plot_path = result
+            z_values = None
+            focus_measures = None
+        elif isinstance(result, tuple) and len(result) == 3:
+            optimal_z, z_values, focus_measures = result
+            plot_path = None
+        else:
+            optimal_z = result
+            z_values = None
+            focus_measures = None
+            plot_path = None
+        
+        self.output_area.append(f"Autofocus result: Optimal position={optimal_z}")
+        
+        # Display the focus measure plot if available
+        if plot_path:
+            plot_pixmap = QPixmap(plot_path)
+            self.chart_label.setPixmap(plot_pixmap.scaled(self.chart_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        elif z_values is not None and focus_measures is not None:
+            # Create the plot if z_values and focus_measures are available
+            plt.figure(figsize=(5, 3))
+            plt.plot(z_values, focus_measures)
+            plt.xlabel('Z Position')
+            plt.ylabel('Focus Measure')
+            plt.title(f'Autofocus Results\nOptimal Z: {optimal_z:.2f}')
+            plt.axvline(x=optimal_z, color='r', linestyle='--', label='Optimal Z')
+            plt.legend()
+            
+            # Save the plot to a buffer
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            buf.seek(0)
+            
+            # Convert the buffer to a QPixmap and display it
+            plot_pixmap = QPixmap()
+            plot_pixmap.loadFromData(buf.getvalue())
+            self.chart_label.setPixmap(plot_pixmap.scaled(self.chart_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
+            plt.close()  # Close the matplotlib figure to free up memory
+        else:
+            self.chart_label.clear()
+            self.chart_label.setText("No plot available")
+        
+        # Move the stage to the optimal position
+        self.microscope.stage.move(z=optimal_z)
+        self.output_area.append(f"Moved stage to optimal Z position: {optimal_z}")
 
 
     def capture_image(self):
@@ -342,7 +419,46 @@ class MicroscopeControlApp(QMainWindow):
             print(f"Detailed error in capture_image: {str(e)}")
             import traceback
             print(f"Traceback in capture_image: {traceback.format_exc()}")
+    # def capture_image(self):
+    #     if not self.microscope:
+    #         QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+    #         return
+    #     self.output_area.append("Capturing image...")
+    #     try:
+    #         # Turn on the lamp
+    #         self.microscope.lamp.set_on()
+    #         time.sleep(4)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)
+    #         image = self.microscope.camera.capture()
+    #         time.sleep(0.6)
 
+    #         image = self.microscope.camera.capture()
+    #         file_name = f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
+    #         os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
+    #         pre_path = os.path.join("Autofocus", "captures", file_name)
+    #         tiff.imwrite(pre_path, image)
+    #         if image is not None:
+    #             print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
+    #             self.display_image(image)
+    #             self.display_image_info(image)  # New method to display additional info
+    #             self.output_area.append("Image captured successfully.")
+    #             self.output_area.append(f"Image saved as {file_name}")
+    #         else:
+    #             self.output_area.append("Failed to capture image.")
+            
+    #         self.microscope.lamp.set_off()
+    #     except Exception as e:
+    #         self.output_area.append(f"Error capturing image: {e}")
+    #         print(f"Detailed error in capture_image: {str(e)}")
+    #         import traceback
+    #         print(f"Traceback in capture_image: {traceback.format_exc()}")
+
+    
     def display_image(self, image):
         try:
             if image is not None:
@@ -370,6 +486,45 @@ class MicroscopeControlApp(QMainWindow):
             print(f"Error in display_image: {str(e)}")
             import traceback
             print(f"Traceback in display_image: {traceback.format_exc()}")
+    # def display_image_info(self, image):
+    #     try:
+    #         info_text = f"Image Information:\n\n"
+    #         info_text += f"Shape: {image.shape}\n"
+    #         info_text += f"Data Type: {image.dtype}\n"
+    #         info_text += f"Min Value: {np.min(image)}\n"
+    #         info_text += f"Max Value: {np.max(image)}\n"
+    #         info_text += f"Mean Value: {np.mean(image):.2f}\n"
+            
+    #         # Add more information as needed
+    #         # For example, you can add camera settings, stage position, etc.
+    #         camera_settings = self.microscope.camera.get_settings()
+    #         info_text += f"\nCamera Settings:\n"
+    #         for key, value in camera_settings.items():
+    #             info_text += f"{key}: {value}\n"
+            
+    #         stage_position = self.microscope.stage.get_position()
+    #         info_text += f"\nStage Position:\n"
+    #         info_text += f"X: {stage_position['x']:.2f}\n"
+    #         info_text += f"Y: {stage_position['y']:.2f}\n"
+    #         info_text += f"Z: {stage_position['z']:.2f}\n"
+            
+    #         self.info_text.setText(info_text)
+    #     except Exception as e:
+    #         print(f"Error in display_image_info: {str(e)}")
+    #         self.info_text.setText(f"Error displaying image info: {str(e)}")
+
+
+    def move_stage(self):
+        if not self.microscope:
+            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+            return
+        x = float(self.stage_x_input.text()) if self.stage_x_input.text() else None
+        y = float(self.stage_y_input.text()) if self.stage_y_input.text() else None
+        z = float(self.stage_z_input.text()) if self.stage_z_input.text() else None
+
+        self.output_area.append(f"Moving stage to: X={x}, Y={y}, Z={z}")
+        self.microscope.stage.move(x=x, y=y, z=z)
+        self.output_area.append("Finished Moving!")
 
 
     def run_test_script(self):

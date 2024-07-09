@@ -57,12 +57,34 @@ class Camera(ICamera):
         except Exception as e:
             print(f"Error setting camera option {option}: {str(e)}")
 
+    def get_option(self, option: str):
+        try:
+            if option in self.available_properties:
+                value = self.core.get_property(self.camera, option)
+                print(f"Current value of {option}: {value}")
+                return value
+            else:
+                print(f"Warning: {option} is not a supported property for this camera")
+                return None
+        except Exception as e:
+            print(f"Error getting camera option {option}: {str(e)}")
+            return None
+
     def set_exposure(self, val: int):
         try:
             self.core.set_exposure(val)
             print(f"Exposure set to {val} ms")
         except Exception as e:
             print(f"Error setting exposure: {str(e)}")
+
+    def get_exposure(self):
+        try:
+            exposure = self.core.get_exposure()
+            print(f"Current exposure: {exposure} ms")
+            return exposure
+        except Exception as e:
+            print(f"Error getting exposure: {str(e)}")
+            return None
 
     def capture(self) -> np.array:
         try:

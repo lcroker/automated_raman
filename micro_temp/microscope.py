@@ -73,10 +73,42 @@ class Microscope:
         self.stage = Stage(self.core)
         self.lamp = Lamp(self.core)
 
+    def set_autofocus_strategy(self, autofocus_strategy_class):
+        print(f"Setting autofocus strategy to {autofocus_strategy_class.__name__}")
+        if not self.camera or not self.stage or not self.lamp:
+            raise ValueError("Camera, Stage, or Lamp is not initialized.")
+        self.autofocus = autofocus_strategy_class(self.camera, self.stage, self.lamp)
+        print(f"Autofocus strategy set: {self.autofocus}")
+
+
     # Autofocussing strategy
-    def auto_focus(self, autofocus_strategy=Amplitude, start=1000, end=1100, step=1):
-        autofocus = autofocus_strategy(self.camera, self.stage, self.lamp)
-        return autofocus.focus(start, end, step)
+    def auto_focus(self, start=1315, end=1350, step=1):
+        if not self.autofocus:
+            raise ValueError("Autofocus strategy is not set.")
+        
+        exposure = self.camera.get_exposure()
+        auto_exposure = self.camera.get_option("ExposureAuto")
+        pixel_type = self.camera.get_option("PixelType")
+        binning = self.camera.get_option("Binning")
+        filter_position = self.core.get_property("FilterCube", "Label")
+
+        self.camera.set_exposure(8)
+        self.camera.set_option("ExposureAuto", "0")
+        self.camera.set_option("PixelType", "GREY8")
+        self.camera.set_option("Binning", "1x1")
+        self.core.set_property("FilterCube", "Label", "Position-2")
+
+        print(f"Starting autofocus: start={start}, end={end}, step={step}")
+        result = self.autofocus.focus(start, end, step)
+        print(f"Autofocus result: {result}")
+
+        self.camera.set_exposure(exposure)
+        self.camera.set_option("ExposureAuto", auto_exposure)
+        self.camera.set_option("PixelType", pixel_type)
+        self.camera.set_option("Binning", binning)
+        self.core.set_property("FilterCube", "Label", filter_position)
+
+        return result
     
     # Cell identification strategy
     def identify_cells(self, identifier_strategy=CustomCellIdentifier, min_distance=60, threshold_abs=5):

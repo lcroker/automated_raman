@@ -7,6 +7,7 @@ from camera import ICamera, Camera, SpectralCamera
 from lamp import Lamp
 from stage import Stage
 import time
+import matplotlib.pyplot as plt
 
 class Autofocus(ABC):
     def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
@@ -57,6 +58,21 @@ class Autofocus(ABC):
         self.stage.move(z=start)
         self.lamp.set_off()
 
+    def plot_focus_measure(self, z_values, focus_measures):
+        plt.figure(figsize=(4, 3))  # Smaller figure size
+        plt.bar(z_values, focus_measures, width=0.8*(z_values[1]-z_values[0]))
+        plt.xlabel('Z Position')
+        plt.ylabel('Focus Measure')
+        plt.title('Autofocus Results')
+        plt.tight_layout()
+        
+        # Save the plot
+        plot_path = os.path.join(self.image_dir, "focus_measure_plot.png")
+        plt.savefig(plot_path, dpi=100)
+        plt.close()
+        
+        return plot_path
+
     @abstractmethod
     def focus(self, start: int, end: int, step: float) -> float:
         pass
@@ -65,9 +81,30 @@ class Amplitude(Autofocus):
     def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
         super().__init__(camera, stage, lamp, image_dir)
 
+    # def focus(self, start: int, end: int, step: float) -> float:
+    #     self.zscan(start, end, step)
+    #     max_var, max_index, variances = -1, -1, []
+
+    #     for i, (capture_path, z_val) in enumerate(self.captures):
+    #         try:
+    #             image = tiff.imread(capture_path)
+    #             mean = np.mean(image)
+    #             if mean == 0:
+    #                 continue
+    #             std = np.std(image)
+    #             norm_var = std * std / mean
+    #             variances.append(norm_var)
+    #             if norm_var > max_var:
+    #                 max_var, max_index = norm_var, i
+    #         except Exception as e:
+    #             print(f"Error processing capture {i} at z={z_val}: {e}")
+
+    #     return self.captures[max_index][1]  # Return the z-value of the best focus
+
     def focus(self, start: int, end: int, step: float) -> float:
         self.zscan(start, end, step)
         max_var, max_index, variances = -1, -1, []
+        z_values = []
 
         for i, (capture_path, z_val) in enumerate(self.captures):
             try:
@@ -78,12 +115,18 @@ class Amplitude(Autofocus):
                 std = np.std(image)
                 norm_var = std * std / mean
                 variances.append(norm_var)
+                z_values.append(z_val)
                 if norm_var > max_var:
                     max_var, max_index = norm_var, i
             except Exception as e:
                 print(f"Error processing capture {i} at z={z_val}: {e}")
 
-        return self.captures[max_index][1]  # Return the z-value of the best focus
+        # Plot focus measure
+        plot_path = self.plot_focus_measure(z_values, variances)
+
+        return self.captures[max_index][1], plot_path  # Return the z-value of the best focus and the plot path
+        # Update the Phase class similarly
+
 
 class Phase(Autofocus):
     def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
