@@ -14,7 +14,7 @@ from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from microscope import Microscope
 from autofocus import Amplitude, Phase
-from base_cell_identifier import ICellIdentifier, CustomCellIdentifier
+from base_cell_identifier import ICellIdentifier, CustomCellIdentifier, CellposeCellIdentifier
 from base_cell_filter import ICellFilter, Isolated
 
 
@@ -51,6 +51,7 @@ class MicroscopeControlApp(QMainWindow):
         # Add dictionaries to store available strategies
         self.cell_identifier_strategies = {
             "CustomCellIdentifier": CustomCellIdentifier,
+            "CellposeCellIdentifier": CellposeCellIdentifier,
         }
         self.cell_filter_strategies = {
             "Isolated": Isolated,
@@ -145,7 +146,8 @@ class MicroscopeControlApp(QMainWindow):
         cell_id_group = self.create_group_box("Cell Identification", [
             ("label", "Cell Identification Strategy"),
             ("combo", list(self.cell_identifier_strategies.keys()), "cell_id_strategy_dropdown"),
-            ("button", "Apply Cell ID Strategy", "apply_cell_id_strategy_button")
+            ("button", "Apply Cell ID Strategy", "apply_cell_id_strategy_button"),
+            ("image", (400, 300), "cell_id_image_label")  # Add this line
         ])
 
         # Cell Filtering Strategy Section
@@ -539,6 +541,33 @@ class MicroscopeControlApp(QMainWindow):
         result = self.microscope.auto_focus(strategy=Amplitude, start=1350, end=1400)
         self.output_area.append(f"Test script result: {result}")
 
+    def apply_cell_filter_strategy(self):
+        if not self.microscope:
+            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+            return
+        
+        strategy_name = self.cell_filter_strategy_dropdown.currentText()
+        strategy_class = self.cell_filter_strategies[strategy_name]
+        
+        self.output_area.append(f"Applying Cell Filter Strategy: {strategy_name}")
+        try:
+            # Assuming we have already identified cells
+            identified_cells = self.microscope.identify_cells()[0]  # Get only the cell coordinates
+            
+            # Apply the filter strategy
+            filtered_cells = self.microscope.filter_cells(identified_cells, filter_strategy=strategy_class)
+            
+            self.output_area.append(f"Filtered down to {len(filtered_cells)} cells.")
+            
+            # You might want to visualize the filtered cells here
+            # For now, we'll just update the output
+            self.output_area.append("Filtered cells: " + str(filtered_cells))
+            
+        except Exception as e:
+            self.output_area.append(f"Error applying cell filter strategy: {e}")
+            QMessageBox.warning(self, "Error", f"An error occurred while applying the cell filter strategy: {str(e)}")
+
+
     def apply_cell_id_strategy(self):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
@@ -549,43 +578,22 @@ class MicroscopeControlApp(QMainWindow):
         
         self.output_area.append(f"Applying Cell Identification Strategy: {strategy_name}")
         try:
-            # Capture an image
-            image = self.microscope.camera.capture()
-            
             # Identify cells using the selected strategy
-            identified_cells = self.microscope.identify_cells(identifier_strategy=strategy_class)
+            identified_cells, marked_image = self.microscope.identify_cells(identifier_strategy=strategy_class)
             
             self.output_area.append(f"Identified {len(identified_cells)} cells.")
             
-            # You might want to visualize the identified cells on the image here
-            # For now, we'll just display the captured image
-            self.display_image(image)
+            # Convert the marked image to QImage for display
+            height, width, channel = marked_image.shape
+            bytes_per_line = 3 * width
+            q_image = QImage(marked_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            self.cell_id_image_label.setPixmap(pixmap.scaled(self.cell_id_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
         except Exception as e:
             self.output_area.append(f"Error applying cell identification strategy: {e}")
+            QMessageBox.warning(self, "Error", f"An error occurred while applying the cell identification strategy: {str(e)}")
 
-    def apply_cell_filter_strategy(self):
-        if not self.microscope:
-            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
-            return
-        
-        strategy_name = self.cell_filter_strategy_dropdown.currentText()
-        strategy_class = self.cell_filter_strategies[strategy_name]
-        
-        self.output_area.append(f"Applying Cell Filtering Strategy: {strategy_name}")
-        try:
-            # For this example, we'll assume we have already identified cells
-            # In a real scenario, you might want to chain this with cell identification
-            identified_cells = self.microscope.identify_cells()  # Using default strategy
-            
-            # Filter cells using the selected strategy
-            filtered_cells = self.microscope.filter_cells(identified_cells, filter_strategy=strategy_class)
-            
-            self.output_area.append(f"Filtered down to {len(filtered_cells)} cells.")
-            
-            # You might want to visualize the filtered cells on the image here
-            # For now, we'll just update the output
-        except Exception as e:
-            self.output_area.append(f"Error applying cell filtering strategy: {e}")
 
     def closeEvent(self, event):
         if self.microscope:

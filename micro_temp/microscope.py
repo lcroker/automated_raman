@@ -6,7 +6,10 @@ import multiprocessing
 from pycromanager import Core, start_headless, stop_headless
 from autofocus import Autofocus, Amplitude, Phase
 from base_cell_filter import ICellFilter, Isolated
-from base_cell_identifier import ICellIdentifier, CustomCellIdentifier
+from base_cell_identifier import ICellIdentifier, CustomCellIdentifier, CellposeCellIdentifier
+import cv2
+import numpy as np
+import os
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -38,6 +41,17 @@ class Microscope:
         self.cell_filter = None
         self.java_process = None
         self.initialize_components()
+
+        # Create the cell_identify directory next to the Autofocus directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        cell_identify_dir = os.path.join(parent_dir, "cell_identify")
+        os.makedirs(cell_identify_dir, exist_ok=True)
+        
+        self.cell_identifier_strategies = {
+            "CustomCellIdentifier": CustomCellIdentifier,
+            "CellposeCellIdentifier": lambda: CellposeCellIdentifier(save_dir=cell_identify_dir)
+        }
 
     def initialize_core(self, max_attempts=10, delay=5):
         for attempt in range(1, max_attempts + 1):
@@ -111,14 +125,29 @@ class Microscope:
         return result
     
     # Cell identification strategy
-    def identify_cells(self, identifier_strategy=CustomCellIdentifier, min_distance=60, threshold_abs=5):
+    def identify_cells(self, identifier_strategy=CellposeCellIdentifier, **kwargs):
         cell_identifier = identifier_strategy()
-        return cell_identifier.identify(self.camera.capture(), min_distance, threshold_abs)
+        image = self.camera.capture()
+        
+        # Convert image to numpy array if it's not already
+        if not isinstance(image, np.ndarray):
+            image = np.array(image)
+        
+        cell_coordinates, marked_image = cell_identifier.identify(image, **kwargs)
+        
+        # Ensure the marked_image is in the correct format for display
+        if len(marked_image.shape) == 2:
+            marked_image = cv2.cvtColor(marked_image, cv2.COLOR_GRAY2RGB)
+        elif marked_image.shape[2] == 4:
+            marked_image = cv2.cvtColor(marked_image, cv2.COLOR_RGBA2RGB)
+        
+        return cell_coordinates, marked_image
     
     # Cell filtering strategy
-    def filter_cells(self, cell_xy, filter_strategy=Isolated, n_filtered=10):
-        cell_filter = filter_strategy()
-        return cell_filter.filter(cell_xy, n_filtered)
+    def filter_cells(self, cell_coordinates, filter_strategy=Isolated, **kwargs):
+        filter_instance = filter_strategy()
+        return filter_instance.filter(cell_coordinates, **kwargs)
+
     
     def set_option(self, device, property_name, value):
         try:
