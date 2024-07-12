@@ -10,15 +10,15 @@ import time
 import matplotlib.pyplot as plt
 
 class Autofocus(ABC):
-    def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
+    def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, directory_setup):
         self.camera = camera
         self.lamp = lamp
         self.stage = stage
-        self.image_dir = image_dir
+        self.directory_setup = directory_setup
+        self.autofocus_dir = self.directory_setup.get_directory("autofocus")
+        self.spectra_dir = self.directory_setup.get_directory("spectra")
         self.captures = []
-        os.makedirs(os.path.join(self.image_dir, "images"), exist_ok=True)
-        os.makedirs(os.path.join(self.image_dir, "spectra"), exist_ok=True)
-        os.makedirs(os.path.join(self.image_dir, "captures"), exist_ok=True)
+
 
     def zscan(self, start: int, end: int, step: float = 1) -> None:
         self.start = start
@@ -28,27 +28,27 @@ class Autofocus(ABC):
         self.stage.move(z=start)
         self.lamp.set_on()
         time.sleep(4)
-        img = self.camera.capture()
+        img = self.camera.snap_image()
         time.sleep(0.6)
-        img = self.camera.capture()
+        img = self.camera.snap_image()
         time.sleep(0.6)
-        img = self.camera.capture()
+        img = self.camera.snap_image()
         time.sleep(0.6)
-        img = self.camera.capture()
+        img = self.camera.snap_image()
         time.sleep(0.6)
 
 
-        for i, z_val in enumerate(np.arange(start, end, step)):
+        for i, z_val in enumerate(np.arange(start, end + 1 , step)):
             try:
-                img = self.camera.capture()
+                img = self.camera.snap_image()
                 if isinstance(self.camera, Camera):
                     filename = f"capture_z{z_val:.2f}.tif"
-                    pre_path = os.path.join(self.image_dir, "images", filename)
-                    tiff.imwrite(pre_path, img) # photometric=minisblack
+                    pre_path = self.autofocus_dir / filename
+                    tiff.imwrite(str(pre_path), img)
                     self.captures.append((pre_path, z_val))
                 elif isinstance(self.camera, SpectralCamera):
-                    filename = f"capture_z{z_val:.2f}.csv"
-                    pre_path = os.path.join(self.image_dir, "spectra", filename)
+                    filename = f"spectra_z{z_val:.2f}.tif"
+                    pre_path = self.spectra_dir / filename
                     pd.DataFrame(img).to_csv(pre_path, index=False)
                     self.captures.append((pre_path, z_val))
             except Exception as e:
@@ -59,7 +59,11 @@ class Autofocus(ABC):
         self.lamp.set_off()
 
     def plot_focus_measure(self, z_values, focus_measures):
-        plt.figure(figsize=(4, 3))  # Smaller figure size
+        if not z_values or len(z_values) < 2:
+            print("Not enough data points to plot focus measure.")
+            return None
+
+        plt.figure(figsize=(4, 3))
         plt.bar(z_values, focus_measures, width=0.8*(z_values[1]-z_values[0]))
         plt.xlabel('Z Position')
         plt.ylabel('Focus Measure')
@@ -67,7 +71,7 @@ class Autofocus(ABC):
         plt.tight_layout()
         
         # Save the plot
-        plot_path = os.path.join(self.image_dir, "focus_measure_plot.png")
+        plot_path = os.path.join(self.autofocus_dir, "focus_measure_plot.png")
         plt.savefig(plot_path, dpi=100)
         plt.close()
         
@@ -78,28 +82,9 @@ class Autofocus(ABC):
         pass
 
 class Amplitude(Autofocus):
-    def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, image_dir="Autofocus"):
-        super().__init__(camera, stage, lamp, image_dir)
+    def __init__(self, camera: ICamera, stage: Stage, lamp: Lamp, directory_setup):
+        super().__init__(camera, stage, lamp, directory_setup)
 
-    # def focus(self, start: int, end: int, step: float) -> float:
-    #     self.zscan(start, end, step)
-    #     max_var, max_index, variances = -1, -1, []
-
-    #     for i, (capture_path, z_val) in enumerate(self.captures):
-    #         try:
-    #             image = tiff.imread(capture_path)
-    #             mean = np.mean(image)
-    #             if mean == 0:
-    #                 continue
-    #             std = np.std(image)
-    #             norm_var = std * std / mean
-    #             variances.append(norm_var)
-    #             if norm_var > max_var:
-    #                 max_var, max_index = norm_var, i
-    #         except Exception as e:
-    #             print(f"Error processing capture {i} at z={z_val}: {e}")
-
-    #     return self.captures[max_index][1]  # Return the z-value of the best focus
 
     def focus(self, start: int, end: int, step: float) -> float:
         self.zscan(start, end, step)

@@ -5,15 +5,23 @@ from cellpose import models
 import cv2
 import os
 from datetime import datetime
+from pathlib import Path
+from skimage.feature import peak_local_max
 
 class ICellIdentifier(ABC):
+    def __init__(self, directory_setup):
+        self.directory_setup = directory_setup
+        self.identified_cell_images_dir = self.directory_setup.get_directory("identified_cell_images")
+
     @abstractmethod
     def identify(self, image: np.ndarray, **kwargs) -> Tuple[List[Tuple[int, int]], np.ndarray]:
         pass
 
 class CustomCellIdentifier(ICellIdentifier):
-    def identify(self, image: np.ndarray, min_distance: int = 60, threshold_abs: int = 5) -> Tuple[List[Tuple[int, int]], np.ndarray]:
-        from skimage.feature import peak_local_max
+    def __init__(self, directory_setup):
+        super().__init__(directory_setup)
+
+    def identify(self,  image: np.ndarray, min_distance: int = 60, threshold_abs: int = 5) -> Tuple[List[Tuple[int, int]], np.ndarray]:
         cells = peak_local_max(image, min_distance=min_distance, threshold_abs=threshold_abs)
         
         marked_image = image.copy()
@@ -26,15 +34,9 @@ class CustomCellIdentifier(ICellIdentifier):
         return cells.tolist(), marked_image
 
 class CellposeCellIdentifier(ICellIdentifier):
-    def __init__(self, model_type='cyto', save_dir=None):
+    def __init__(self, directory_setup, model_type='cyto'):
+        super().__init__(directory_setup)
         self.model = models.Cellpose(model_type=model_type)
-        if save_dir is None:
-            # If no save_dir is provided, use a default relative path
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            parent_dir = os.path.dirname(current_dir)
-            save_dir = os.path.join(parent_dir, "cell_identify")
-        self.save_dir = save_dir
-        os.makedirs(self.save_dir, exist_ok=True)
 
     def identify(self, image: np.ndarray, diameter: int = 30, **kwargs) -> Tuple[List[Tuple[int, int]], np.ndarray]:
         # Ensure the image is in the correct format for Cellpose
@@ -73,6 +75,6 @@ class CellposeCellIdentifier(ICellIdentifier):
     def save_image(self, image):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"cellpose_marked_image_{timestamp}.png"
-        filepath = os.path.join(self.save_dir, filename)
-        cv2.imwrite(filepath, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+        filepath = self.identified_cell_images_dir / filename
+        cv2.imwrite(str(filepath), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
         print(f"Marked image saved as: {filepath}")

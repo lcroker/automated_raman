@@ -16,6 +16,7 @@ from microscope import Microscope
 from autofocus import Amplitude, Phase
 from base_cell_identifier import ICellIdentifier, CustomCellIdentifier, CellposeCellIdentifier
 from base_cell_filter import ICellFilter, Isolated
+from directory_setup import DirectorySetup, setup_directories
 
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,22 +26,24 @@ plt.rcParams['font.family'] = 'DejaVu Sans'
 class MicroManagerInitThread(QThread):
     finished = pyqtSignal(object, str)
 
-    def __init__(self, config_file, app_path):
+    def __init__(self, config_file, app_path, directory_setup):
         super().__init__()
         self.config_file = config_file
         self.app_path = app_path
+        self.directory_setup = directory_setup
 
     def run(self):
         try:
-            microscope = Microscope(self.config_file, self.app_path)
+            microscope = Microscope(self.config_file, self.directory_setup, self.app_path)
             self.finished.emit(microscope, "Micro-Manager started successfully.")
         except Exception as e:
             logging.error(f"Error in MicroManagerInitThread: {e}", exc_info=True)
             self.finished.emit(None, f"Error starting Micro-Manager: {str(e)}")
 
 class MicroscopeControlApp(QMainWindow):
-    def __init__(self):
+    def __init__(self, directory_setup):
         super().__init__()
+        self.directory_setup = directory_setup
         self.setWindowTitle("Microscope Control")
         self.setGeometry(100, 100, 1200, 800)  # Set a default size
         
@@ -253,7 +256,7 @@ class MicroscopeControlApp(QMainWindow):
         self.output_area.append("Starting Micro-Manager...")
         self.start_headless_button.setEnabled(False)
 
-        self.init_thread = MicroManagerInitThread(config_file, self.mm_app_path)
+        self.init_thread = MicroManagerInitThread(config_file, self.mm_app_path, self.directory_setup)
         self.init_thread.finished.connect(self.on_micromanager_init_finished)
         self.init_thread.start()
 
@@ -282,10 +285,10 @@ class MicroscopeControlApp(QMainWindow):
             self.output_area.append(f"Setting camera options: Binning={binning}, PixelType={pixel_type}, "
                                     f"ExposureAuto={exposure_auto}, Exposure={exposure}ms, FilterCube={filter_position}")
 
-            self.microscope.camera.set_option("Binning", binning)
-            self.microscope.camera.set_option("PixelType", pixel_type)
-            self.microscope.camera.set_option("ExposureAuto", exposure_auto)
-            self.microscope.set_option("FilterCube", "Label", filter_position)
+            self.microscope.camera.set_camera_property("Binning", binning)
+            self.microscope.camera.set_camera_property("PixelType", pixel_type)
+            self.microscope.camera.set_camera_property("ExposureAuto", exposure_auto)
+            self.microscope.set_microscope_property("FilterCube", "Label", filter_position)
             
             if exposure_auto == "0":  # Only set exposure if auto exposure is off
                 self.microscope.camera.set_exposure(int(exposure))
@@ -296,26 +299,6 @@ class MicroscopeControlApp(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to set camera options: {str(e)}")
 
 
-
-    # def start_autofocus(self):
-    #     if not self.microscope:
-    #         QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
-    #         return
-    #     start = int(self.start_position_input.text())
-    #     end = int(self.end_position_input.text())
-    #     step = float(self.step_size_input.text())
-    #     strategy_name = self.autofocus_strategy_dropdown.currentText()
-    #     strategy_class = self.autofocus_strategies[strategy_name]
-        
-    #     self.output_area.append(f"Starting autofocus with {strategy_name}: Start={start}, End={end}, Step={step}")
-        
-    #     # Create an instance of the autofocus strategy
-    #     autofocus_strategy = strategy_class(self.microscope.camera, self.microscope.stage, self.microscope.lamp)
-        
-    #     # Call the focus method of the strategy
-    #     result = autofocus_strategy.focus(start, end, step)
-        
-    #     self.output_area.append(f"Autofocus result: Optimal position={result}")
     def start_autofocus(self):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
@@ -336,44 +319,16 @@ class MicroscopeControlApp(QMainWindow):
         
         if isinstance(result, tuple) and len(result) == 2:
             optimal_z, plot_path = result
-            z_values = None
-            focus_measures = None
-        elif isinstance(result, tuple) and len(result) == 3:
-            optimal_z, z_values, focus_measures = result
-            plot_path = None
         else:
             optimal_z = result
-            z_values = None
-            focus_measures = None
             plot_path = None
         
         self.output_area.append(f"Autofocus result: Optimal position={optimal_z}")
         
         # Display the focus measure plot if available
-        if plot_path:
+        if plot_path and os.path.exists(plot_path):
             plot_pixmap = QPixmap(plot_path)
             self.chart_label.setPixmap(plot_pixmap.scaled(self.chart_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        elif z_values is not None and focus_measures is not None:
-            # Create the plot if z_values and focus_measures are available
-            plt.figure(figsize=(5, 3))
-            plt.plot(z_values, focus_measures)
-            plt.xlabel('Z Position')
-            plt.ylabel('Focus Measure')
-            plt.title(f'Autofocus Results\nOptimal Z: {optimal_z:.2f}')
-            plt.axvline(x=optimal_z, color='r', linestyle='--', label='Optimal Z')
-            plt.legend()
-            
-            # Save the plot to a buffer
-            buf = io.BytesIO()
-            plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            buf.seek(0)
-            
-            # Convert the buffer to a QPixmap and display it
-            plot_pixmap = QPixmap()
-            plot_pixmap.loadFromData(buf.getvalue())
-            self.chart_label.setPixmap(plot_pixmap.scaled(self.chart_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            
-            plt.close()  # Close the matplotlib figure to free up memory
         else:
             self.chart_label.clear()
             self.chart_label.setText("No plot available")
@@ -389,76 +344,18 @@ class MicroscopeControlApp(QMainWindow):
             return
         self.output_area.append("Capturing image...")
         try:
-            # Turn on the lamp
-            self.microscope.lamp.set_on()
-            time.sleep(4)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)
-            image = self.microscope.camera.capture()
-            time.sleep(0.6)
-
-            image = self.microscope.camera.capture()
-            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
-            os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
-            file_name=f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
-            pre_path = os.path.join("Autofocus", "captures", file_name)
-            tiff.imwrite(pre_path, image)
+            image = self.microscope.capture_image()
             if image is not None:
-                print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
                 self.display_image(image)
                 self.output_area.append("Image captured successfully.")
-                self.output_area.append(f"Image saved")
+                self.output_area.append("Image saved")
             else:
                 self.output_area.append("Failed to capture image.")
-            
-            self.microscope.lamp.set_off()
         except Exception as e:
             self.output_area.append(f"Error capturing image: {e}")
             print(f"Detailed error in capture_image: {str(e)}")
             import traceback
             print(f"Traceback in capture_image: {traceback.format_exc()}")
-    # def capture_image(self):
-    #     if not self.microscope:
-    #         QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
-    #         return
-    #     self.output_area.append("Capturing image...")
-    #     try:
-    #         # Turn on the lamp
-    #         self.microscope.lamp.set_on()
-    #         time.sleep(4)
-    #         image = self.microscope.camera.capture()
-    #         time.sleep(0.6)
-    #         image = self.microscope.camera.capture()
-    #         time.sleep(0.6)
-    #         image = self.microscope.camera.capture()
-    #         time.sleep(0.6)
-    #         image = self.microscope.camera.capture()
-    #         time.sleep(0.6)
-
-    #         image = self.microscope.camera.capture()
-    #         file_name = f"Capture_{time.strftime('%Y%m%d-%H%M%S')}.tif"
-    #         os.makedirs(os.path.join("Autofocus", "captures"), exist_ok=True)
-    #         pre_path = os.path.join("Autofocus", "captures", file_name)
-    #         tiff.imwrite(pre_path, image)
-    #         if image is not None:
-    #             print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
-    #             self.display_image(image)
-    #             self.display_image_info(image)  # New method to display additional info
-    #             self.output_area.append("Image captured successfully.")
-    #             self.output_area.append(f"Image saved as {file_name}")
-    #         else:
-    #             self.output_area.append("Failed to capture image.")
-            
-    #         self.microscope.lamp.set_off()
-    #     except Exception as e:
-    #         self.output_area.append(f"Error capturing image: {e}")
-    #         print(f"Detailed error in capture_image: {str(e)}")
-    #         import traceback
-    #         print(f"Traceback in capture_image: {traceback.format_exc()}")
 
     
     def display_image(self, image):
@@ -488,32 +385,6 @@ class MicroscopeControlApp(QMainWindow):
             print(f"Error in display_image: {str(e)}")
             import traceback
             print(f"Traceback in display_image: {traceback.format_exc()}")
-    # def display_image_info(self, image):
-    #     try:
-    #         info_text = f"Image Information:\n\n"
-    #         info_text += f"Shape: {image.shape}\n"
-    #         info_text += f"Data Type: {image.dtype}\n"
-    #         info_text += f"Min Value: {np.min(image)}\n"
-    #         info_text += f"Max Value: {np.max(image)}\n"
-    #         info_text += f"Mean Value: {np.mean(image):.2f}\n"
-            
-    #         # Add more information as needed
-    #         # For example, you can add camera settings, stage position, etc.
-    #         camera_settings = self.microscope.camera.get_settings()
-    #         info_text += f"\nCamera Settings:\n"
-    #         for key, value in camera_settings.items():
-    #             info_text += f"{key}: {value}\n"
-            
-    #         stage_position = self.microscope.stage.get_position()
-    #         info_text += f"\nStage Position:\n"
-    #         info_text += f"X: {stage_position['x']:.2f}\n"
-    #         info_text += f"Y: {stage_position['y']:.2f}\n"
-    #         info_text += f"Z: {stage_position['z']:.2f}\n"
-            
-    #         self.info_text.setText(info_text)
-    #     except Exception as e:
-    #         print(f"Error in display_image_info: {str(e)}")
-    #         self.info_text.setText(f"Error displaying image info: {str(e)}")
 
 
     def move_stage(self):
@@ -534,13 +405,50 @@ class MicroscopeControlApp(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
             return
         self.output_area.append("Running test script...")
-        self.microscope.camera.set_option("Binning", "1x1")
-        self.microscope.camera.set_option("PixelType", "GREY8")
-        self.microscope.camera.set_option("ExposureAuto", "0")
+        self.microscope.camera.set_camera_property("Binning", "1x1")
+        self.microscope.camera.set_camera_property("PixelType", "GREY8")
+        self.microscope.camera.set_camera_property("ExposureAuto", "0")
         self.microscope.camera.set_exposure(17)
         result = self.microscope.auto_focus(strategy=Amplitude, start=1350, end=1400)
         self.output_area.append(f"Test script result: {result}")
 
+
+    def apply_cell_id_strategy(self):
+        if not self.microscope:
+            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
+            return
+        
+        strategy_name = self.cell_id_strategy_dropdown.currentText()
+        strategy_class = self.cell_identifier_strategies[strategy_name]
+        
+        self.output_area.append(f"Applying Cell Identification Strategy: {strategy_name}")
+        try:
+            # Set the cell identifier strategy
+            self.microscope.set_cell_identifier_strategy(strategy_class)
+            
+            # Identify cells using the selected strategy
+            identified_cells, marked_image = self.microscope.identify_cells()
+            
+            self.output_area.append(f"Identified {len(identified_cells)} cells.")
+            
+            # Display cell coordinates in the output area
+            self.output_area.append("Cell coordinates:")
+            for i, (x, y) in enumerate(identified_cells, 1):
+                self.output_area.append(f"Cell {i}: ({x}, {y})")
+            
+            # Convert the marked image to QImage for display
+            height, width, channel = marked_image.shape
+            bytes_per_line = 3 * width
+            q_image = QImage(marked_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
+            pixmap = QPixmap.fromImage(q_image)
+            self.cell_id_image_label.setPixmap(pixmap.scaled(self.cell_id_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            
+        except Exception as e:
+            self.output_area.append(f"Error applying cell identification strategy: {e}")
+            QMessageBox.warning(self, "Error", f"An error occurred while applying the cell identification strategy: {str(e)}")
+
+
+    
     def apply_cell_filter_strategy(self):
         if not self.microscope:
             QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
@@ -568,33 +476,6 @@ class MicroscopeControlApp(QMainWindow):
             QMessageBox.warning(self, "Error", f"An error occurred while applying the cell filter strategy: {str(e)}")
 
 
-    def apply_cell_id_strategy(self):
-        if not self.microscope:
-            QMessageBox.warning(self, "Warning", "Please start Micro-Manager first.")
-            return
-        
-        strategy_name = self.cell_id_strategy_dropdown.currentText()
-        strategy_class = self.cell_identifier_strategies[strategy_name]
-        
-        self.output_area.append(f"Applying Cell Identification Strategy: {strategy_name}")
-        try:
-            # Identify cells using the selected strategy
-            identified_cells, marked_image = self.microscope.identify_cells(identifier_strategy=strategy_class)
-            
-            self.output_area.append(f"Identified {len(identified_cells)} cells.")
-            
-            # Convert the marked image to QImage for display
-            height, width, channel = marked_image.shape
-            bytes_per_line = 3 * width
-            q_image = QImage(marked_image.data, width, height, bytes_per_line, QImage.Format_RGB888)
-            pixmap = QPixmap.fromImage(q_image)
-            self.cell_id_image_label.setPixmap(pixmap.scaled(self.cell_id_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-            
-        except Exception as e:
-            self.output_area.append(f"Error applying cell identification strategy: {e}")
-            QMessageBox.warning(self, "Error", f"An error occurred while applying the cell identification strategy: {str(e)}")
-
-
     def closeEvent(self, event):
         if self.microscope:
             self.output_area.append("Shutting down Micro-Manager...")
@@ -607,8 +488,14 @@ class MicroscopeControlApp(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
-    window = MicroscopeControlApp()
+
+    # Setup directories
+    directory_setup = setup_directories()
+
+    # Create and show the main window
+    window = MicroscopeControlApp(directory_setup)
     window.show()
+    
     sys.exit(app.exec_())
 
 if __name__ == "__main__":

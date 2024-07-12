@@ -3,12 +3,14 @@ import time
 import os
 import tifffile as tiff
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 class ICamera(ABC):
-    def __init__(self, core, camera):
+    def __init__(self, core, directory_setup, camera):
         self.core = core
         self.camera = camera
-        self.snapped_image = None
+        self.directory_setup = directory_setup
+        self.captured_images_dir = self.directory_setup.get_directory("captured_images")
         self.core.set_camera_device(self.camera)
         self.available_properties = self.get_available_properties()
 
@@ -25,7 +27,11 @@ class ICamera(ABC):
         return properties
 
     @abstractmethod
-    def set_option(self, option: str, value: str):
+    def set_camera_property(self, option: str, value: str):
+        pass
+
+    @abstractmethod
+    def get_camera_property(self, option: str, value: str):
         pass
 
     @abstractmethod
@@ -33,18 +39,26 @@ class ICamera(ABC):
         pass
 
     @abstractmethod
+    def get_exposure(self, val: int):
+        pass
+
+    @abstractmethod
     def capture(self) -> np.array:
         pass
 
+    @abstractmethod
+    def snap_image(self) -> np.array:
+        pass
+
 class Camera(ICamera):
-    def __init__(self, core, camera: str = 'AmScope', exposure: int = 15):
-        super().__init__(core, camera)
+    def __init__(self, core, directory_setup, camera: str = 'AmScope', exposure: int = 15):
+        super().__init__(core, directory_setup, camera)
         self.set_exposure(exposure)
         print("Available camera properties:")
         for prop, values in self.available_properties.items():
             print(f"{prop}: {values}")
 
-    def set_option(self, option: str, value: str):
+    def set_camera_property(self, option: str, value: str):
         try:
             if option in self.available_properties:
                 if self.available_properties[option] is None or value in self.available_properties[option]:
@@ -57,7 +71,8 @@ class Camera(ICamera):
         except Exception as e:
             print(f"Error setting camera option {option}: {str(e)}")
 
-    def get_option(self, option: str):
+
+    def get_camera_property(self, option: str):
         try:
             if option in self.available_properties:
                 value = self.core.get_property(self.camera, option)
@@ -124,8 +139,66 @@ class Camera(ICamera):
                 print(f"White balance gains: R={r_gain}, G={g_gain}, B={b_gain}")
             except Exception as e:
                 print(f"Error getting white balance values: {str(e)}")
-                
-            self.snapped_image = img
+
+            self.captured_image = img
+
+            # Save the captured image
+            timestamp = time.strftime('%Y%m%d-%H%M%S')
+            filename = f"Capture_{timestamp}.tif"
+            filepath = Path(self.captured_images_dir) / filename
+            tiff.imwrite(str(filepath), self.captured_image)
+            print(f"Image saved: {filepath}")                
+            
+            return self.captured_image
+        except Exception as e:
+            print(f"Error capturing image: {str(e)}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return None
+        
+    
+    # Same logic as Capture, but capture saves image to "captured_images" directory
+    def snap_image(self) -> np.array:
+        try:
+            self.core.snap_image()
+            img = self.core.get_image()
+            
+            self.width = self.core.get_image_width()
+            self.height = self.core.get_image_height()
+            byte_depth = self.core.get_bytes_per_pixel()
+            pixel_type = self.core.get_property(self.camera, "PixelType")
+
+            print(f"Raw image data size: {len(img)} bytes")
+            print(f"Image snapped. Width: {self.width}, Height: {self.height}, Byte depth: {byte_depth}, Pixel type: {pixel_type}")
+
+            if pixel_type == "GREY8":
+                img = np.frombuffer(img, dtype=np.uint8).reshape((self.height, self.width))
+            elif pixel_type == "RGB32":
+                img = np.frombuffer(img, dtype=np.uint8).reshape((self.height, self.width, 4))
+                img = img[:, :, :3]  # Remove alpha channel if present
+            else:
+                raise ValueError(f"Unsupported pixel type: {pixel_type}")
+            
+            print(f"Reshaped image. Shape: {img.shape}, dtype: {img.dtype}")
+            print(f"Image statistics: Min: {np.min(img)}, Max: {np.max(img)}, Mean: {np.mean(img)}")
+            
+            if pixel_type == "RGB32":
+                print("RGB channel statistics:")
+                for i, color in enumerate(['Red', 'Green', 'Blue']):
+                    channel = img[:,:,i]
+                    print(f"  {color}: Min: {np.min(channel)}, Max: {np.max(channel)}, Mean: {np.mean(channel):.2f}")
+
+            # Print white balance values without applying them
+            try:
+                r_gain = self.core.get_property(self.camera, "WhiteBalanceRGain")
+                g_gain = self.core.get_property(self.camera, "WhiteBalanceGGain")
+                b_gain = self.core.get_property(self.camera, "WhiteBalanceBGain")
+                print(f"White balance gains: R={r_gain}, G={g_gain}, B={b_gain}")
+            except Exception as e:
+                print(f"Error getting white balance values: {str(e)}")
+
+            self.snapped_image = img             
+            
             return self.snapped_image
         except Exception as e:
             print(f"Error capturing image: {str(e)}")
@@ -134,17 +207,29 @@ class Camera(ICamera):
             return None
 
 class SpectralCamera(ICamera):
-    def __init__(self, core, camera: str = 'Andor'):
-        super().__init__(core, camera)
+    def __init__(self, core,  directory_setup, camera: str = 'Andor'):
+        super().__init__(core,  directory_setup, camera)
     
-    def set_option(self, option: str, value: str):
-        # Implement for SpectralCamera if needed
+    def set_camera_property(self, option: str, value: str):
+        # Placeholder implementation
+        pass
+
+    def get_camera_property(self, option: str):
+        # Placeholder implementation
         pass
 
     def set_exposure(self, val: int):
-        # Implement for SpectralCamera if needed
+        # Placeholder implementation
+        pass
+
+    def get_exposure(self):
+        # Placeholder implementation
         pass
     
     def capture(self) -> np.array:
         # Placeholder implementation
-        return np.array([])
+        return np.array([])        
+    
+    def snap_image(self) -> np.array:
+        # Placeholder implementation
+        pass

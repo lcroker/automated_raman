@@ -4,6 +4,9 @@ import gc
 import psutil
 import multiprocessing
 from pycromanager import Core, start_headless, stop_headless
+from camera import Camera
+from stage import Stage
+from lamp import Lamp
 from autofocus import Autofocus, Amplitude, Phase
 from base_cell_filter import ICellFilter, Isolated
 from base_cell_identifier import ICellIdentifier, CustomCellIdentifier, CellposeCellIdentifier
@@ -24,7 +27,8 @@ def shutdown_core():
         logging.info("Core shutdown process completed.")
 
 class Microscope:
-    def __init__(self, config_file, app_path="C:\\Program Files\\Micro-Manager-2.0", headless=True):
+    def __init__(self, config_file, directory_setup, app_path="C:\\Program Files\\Micro-Manager-2.0", headless=True):
+        self.directory_setup = directory_setup
         self.config_file = config_file
         self.app_path = app_path
         self.headless = headless
@@ -40,18 +44,8 @@ class Microscope:
         self.cell_identifier = None
         self.cell_filter = None
         self.java_process = None
+        self.cell_coordinates = []  # Initialize an empty list to store coordinates
         self.initialize_components()
-
-        # Create the cell_identify directory next to the Autofocus directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cell_identify_dir = os.path.join(parent_dir, "cell_identify")
-        os.makedirs(cell_identify_dir, exist_ok=True)
-        
-        self.cell_identifier_strategies = {
-            "CustomCellIdentifier": CustomCellIdentifier,
-            "CellposeCellIdentifier": lambda: CellposeCellIdentifier(save_dir=cell_identify_dir)
-        }
 
     def initialize_core(self, max_attempts=10, delay=5):
         for attempt in range(1, max_attempts + 1):
@@ -78,12 +72,8 @@ class Microscope:
                     logging.error("All attempts to initialize Micro-Manager have failed.")
                     return None
 
-    def initialize_components(self):
-        from camera import Camera
-        from stage import Stage
-        from lamp import Lamp
-        
-        self.camera = Camera(self.core)
+    def initialize_components(self):        
+        self.camera = Camera(self.core, self.directory_setup)
         self.stage = Stage(self.core)
         self.lamp = Lamp(self.core)
 
@@ -91,49 +81,124 @@ class Microscope:
         print(f"Setting autofocus strategy to {autofocus_strategy_class.__name__}")
         if not self.camera or not self.stage or not self.lamp:
             raise ValueError("Camera, Stage, or Lamp is not initialized.")
-        self.autofocus = autofocus_strategy_class(self.camera, self.stage, self.lamp)
+        self.autofocus = autofocus_strategy_class(self.camera, self.stage, self.lamp, self.directory_setup)
         print(f"Autofocus strategy set: {self.autofocus}")
-
 
     # Autofocussing strategy
     def auto_focus(self, start=1315, end=1350, step=1):
         if not self.autofocus:
             raise ValueError("Autofocus strategy is not set.")
         
+        # Record current Camera setting values
         exposure = self.camera.get_exposure()
-        auto_exposure = self.camera.get_option("ExposureAuto")
-        pixel_type = self.camera.get_option("PixelType")
-        binning = self.camera.get_option("Binning")
-        filter_position = self.core.get_property("FilterCube", "Label")
+        auto_exposure = self.camera.get_camera_property("ExposureAuto")
+        pixel_type = self.camera.get_camera_property("PixelType")
+        binning = self.camera.get_camera_property("Binning")
+        filter_position = self.get_microscope_property("FilterCube", "Label")
 
+        # Set to optimal values for autofocus.
         self.camera.set_exposure(8)
-        self.camera.set_option("ExposureAuto", "0")
-        self.camera.set_option("PixelType", "GREY8")
-        self.camera.set_option("Binning", "1x1")
-        self.core.set_property("FilterCube", "Label", "Position-2")
+        self.camera.set_camera_property("ExposureAuto", "0")
+        self.camera.set_camera_property("PixelType", "GREY8")
+        self.camera.set_camera_property("Binning", "1x1")
+        self.set_microscope_property("FilterCube", "Label", "Position-2")
 
         print(f"Starting autofocus: start={start}, end={end}, step={step}")
         result = self.autofocus.focus(start, end, step)
         print(f"Autofocus result: {result}")
 
+        # Set values to values to original values prior to autofocussing
         self.camera.set_exposure(exposure)
-        self.camera.set_option("ExposureAuto", auto_exposure)
-        self.camera.set_option("PixelType", pixel_type)
-        self.camera.set_option("Binning", binning)
-        self.core.set_property("FilterCube", "Label", filter_position)
+        self.camera.set_camera_property("ExposureAuto", auto_exposure)
+        self.camera.set_camera_property("PixelType", pixel_type)
+        self.camera.set_camera_property("Binning", binning)
+        self.set_microscope_property("FilterCube", "Label", filter_position)
 
         return result
     
+    # Image capturing method    
+    def capture_image(self):
+        try:
+            # Turn on the lamp
+            self.lamp.set_on()
+            time.sleep(4)
+            image = self.camera.snap_image()
+            time.sleep(0.6)
+            image = self.camera.snap_image()
+            time.sleep(0.6)
+            image = self.camera.snap_image()
+            time.sleep(0.6)
+            image = self.camera.snap_image()
+            time.sleep(0.6)
+
+            image = self.camera.capture()
+            
+            if image is not None:
+                print(f"Image captured with shape: {image.shape}, dtype: {image.dtype}")
+                # The image saving is handled by the Camera class
+            
+            self.lamp.set_off()
+            return image
+        except Exception as e:
+            print(f"Detailed error in capture_image: {str(e)}")
+            import traceback
+            print(f"Traceback in capture_image: {traceback.format_exc()}")
+            return None
+    
+    # Setter for cell_identifier_strategy
+    def set_cell_identifier_strategy(self, cell_identifier_strategy_class=CellposeCellIdentifier):
+        print(f"Setting cell identifier strategy to {cell_identifier_strategy_class.__name__}")
+        if not issubclass(cell_identifier_strategy_class, ICellIdentifier):
+            raise ValueError("The provided class must be a subclass of ICellIdentifier")
+        self.cell_identifier = cell_identifier_strategy_class(self.directory_setup)
+        print(f"Cell identifier strategy set: {self.cell_identifier}")
+
+    
     # Cell identification strategy
-    def identify_cells(self, identifier_strategy=CellposeCellIdentifier, **kwargs):
-        cell_identifier = identifier_strategy()
-        image = self.camera.capture()
+    def identify_cells(self, **kwargs):
+        if not self.cell_identifier:
+            raise ValueError("Cell identifier strategy is not set.")        
+
+        ############################### May remove if leaving it to user to decide ###############################
+        # Record current Camera setting values
+        auto_exposure = self.camera.get_camera_property("ExposureAuto")
+        pixel_type = self.camera.get_camera_property("PixelType")
+        binning = self.camera.get_camera_property("Binning")
+        filter_position = self.get_microscope_property("FilterCube", "Label")
+
+        # Set to optimal values for identifying cells.
+        self.camera.set_camera_property("ExposureAuto", "1")
+        self.camera.set_camera_property("PixelType", "RGB32")
+        self.camera.set_camera_property("Binning", "4x4")
+        self.set_microscope_property("FilterCube", "Label", "Position-2")
+        ###########################################################################################################
+        
+        self.lamp.set_on()
+        time.sleep(4)
+        image = self.camera.snap_image()
+        time.sleep(0.6)
+        image = self.camera.snap_image()
+        time.sleep(0.6)
+        image = self.camera.snap_image()
+        time.sleep(0.6)
+        image = self.camera.snap_image()
+        time.sleep(0.6)
+        # Snap image
+        image = self.camera.snap_image()        
+
+        ############################### May remove if leaving it to user to decide ###############################
+        # Set values to values to original values prior to identifying cells
+        self.camera.set_camera_property("ExposureAuto", auto_exposure)
+        self.camera.set_camera_property("PixelType", pixel_type)
+        self.camera.set_camera_property("Binning", binning)
+        self.set_microscope_property("FilterCube", "Label", filter_position)
+        ###########################################################################################################      
         
         # Convert image to numpy array if it's not already
         if not isinstance(image, np.ndarray):
             image = np.array(image)
         
-        cell_coordinates, marked_image = cell_identifier.identify(image, **kwargs)
+        cell_coordinates, marked_image = self.cell_identifier.identify(image, **kwargs)
         
         # Ensure the marked_image is in the correct format for display
         if len(marked_image.shape) == 2:
@@ -141,15 +206,19 @@ class Microscope:
         elif marked_image.shape[2] == 4:
             marked_image = cv2.cvtColor(marked_image, cv2.COLOR_RGBA2RGB)
         
+        self.cell_coordinates = cell_coordinates
         return cell_coordinates, marked_image
+    
+    def get_cell_coordinates(self):
+        return self.cell_coordinates    
     
     # Cell filtering strategy
     def filter_cells(self, cell_coordinates, filter_strategy=Isolated, **kwargs):
         filter_instance = filter_strategy()
         return filter_instance.filter(cell_coordinates, **kwargs)
-
     
-    def set_option(self, device, property_name, value):
+    # previously set_option
+    def set_microscope_property(self, device, property_name, value):
         try:
             if device == "FilterCube":
                 self.core.set_property(device, "Label", value)
@@ -161,14 +230,29 @@ class Microscope:
         except Exception as e:
             logging.error(f"Error setting {device} {property_name}: {str(e)}")
             raise
-    
-    
+
+    def get_microscope_property(self, device, property_name):
+        try:
+            if device == "FilterCube" and property_name == "Label":
+                value = self.core.get_property(device, "Label")
+                logging.info(f"Got FilterCube Label: {value}")
+            else:
+                # For future extensions, you can add more device-specific logic here
+                value = self.core.get_property(device, property_name)
+                logging.info(f"Got {device} {property_name}: {value}")
+            return value
+        except Exception as e:
+            logging.error(f"Error getting {device} {property_name}: {str(e)}")
+            raise
+
+
     def find_java_process(self):
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             if 'java' in proc.info['name'].lower() and any('micro-manager' in arg.lower() for arg in proc.info['cmdline']):
                 self.java_process = proc
                 logging.info(f"Found Java process for Micro-Manager: PID {proc.pid}")
                 break
+
 
     def shutdown(self):
         logging.info("Initiating Micro-Manager shutdown...")
@@ -214,6 +298,7 @@ class Microscope:
             logging.info("Micro-Manager shutdown complete.")
         except Exception as e:
             logging.error(f"Unexpected error during shutdown: {e}")
+
 
     def __del__(self):
         if hasattr(self, 'core') and self.core is not None:
